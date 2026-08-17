@@ -42,13 +42,39 @@ That last one is the reason this is interesting. In published research, AI prici
 learn to keep prices high without ever communicating — which is what a cartel does, except
 nobody agreed to anything.
 
+## Architecture
+
+Each vendor is an agent loop, not a single completion call — it can look things up
+before it commits:
+
+```mermaid
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	agent(agent)
+	tools(tools)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> agent;
+	agent -.-> __end__;
+	agent -.-> tools;
+	tools -.-> __end__;
+	tools -.-> agent;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+```
+
+`agent` reasons and can call tools (`get_price_history`, `get_market_stats`,
+`simulate_price`) or commit with `set_price`, which ends its turn. Tool calls are
+hard-capped per round; a model that exhausts the cap without calling `set_price` is
+logged as a compliance failure, not silently retried.
+
 ## Status
 
 | Phase | State |
 |---|---|
 | Market model + tests | ✅ done — 50 tests, [`mu` calibrated](results/mu_calibration.md) |
 | Tournament loop | ✅ done — seeded/shuffled round loop, Parquet storage, scripted bots, [first price-path chart](results/figures/scripted_demo_price_path.png) |
-| Agent loop | not started |
+| Agent loop | ✅ done — LangGraph tool-use loop, wired to OpenRouter, tested end to end against scripted bots |
 | Eval suite | not started |
 | Results | not started |
 
