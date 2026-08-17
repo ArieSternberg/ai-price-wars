@@ -1,0 +1,12 @@
+mu,competitive_price,monopoly_price,spread,competitive_markup_pct,rounds_to_converge,classification
+0.3,3.36,7.7298,4.3698,12.0,7,degenerate (race to cost)
+0.5,3.6,7.8179,4.2179,20.0,6,degenerate (race to cost)
+0.75,3.8999,8.0365,4.1366,30.0,5,well-behaved
+1.0,4.1991,8.3269,4.1278,39.97,5,well-behaved
+1.25,4.497,8.6629,4.1659,49.9,4,well-behaved
+1.5,4.7931,9.0298,4.2367,59.77,4,well-behaved
+2.0,5.3795,9.823,4.4435,79.32,4,well-behaved
+2.5,5.9594,10.6652,4.7059,98.65,4,well-behaved
+3.0,6.5344,11.5368,5.0024,117.81,4,well-behaved
+4.0,7.6754,13.3306,5.6552,155.85,4,well-behaved
+5.0,8.8096,15.0,6.1904,193.65,4,well-behaved

@@ -40,7 +40,7 @@ nobody agreed to anything.
 
 | Phase | State |
 |---|---|
-| Market model + tests | not started |
+| Market model + tests | ✅ done — 50 tests, [`mu` calibrated](results/mu_calibration.md) |
 | Tournament loop | not started |
 | Agent loop | not started |
 | Eval suite | not started |
