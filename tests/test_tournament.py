@@ -117,3 +117,48 @@ class TestRunMatch:
         config = MarketConfig()
         result = run(run_match(default_roster(), config, MatchConfig(n_rounds=3, seed=1)))
         assert result.references.monopoly > result.references.competitive
+
+
+class TestOnRoundComplete:
+    def test_sync_callback_fires_once_per_round_with_all_vendors(self):
+        config = MarketConfig()
+        seen: list[tuple[int, int]] = []
+
+        def callback(round_num, round_logs):
+            seen.append((round_num, len(round_logs)))
+
+        run(run_match(default_roster(), config, MatchConfig(n_rounds=4, seed=1), on_round_complete=callback))
+        assert seen == [(1, config.n_vendors), (2, config.n_vendors), (3, config.n_vendors), (4, config.n_vendors)]
+
+    def test_async_callback_is_awaited(self):
+        config = MarketConfig()
+        seen: list[int] = []
+
+        async def callback(round_num, round_logs):
+            await asyncio.sleep(0)
+            seen.append(round_num)
+
+        run(run_match(default_roster(), config, MatchConfig(n_rounds=3, seed=1), on_round_complete=callback))
+        assert seen == [1, 2, 3]
+
+    def test_callback_sees_final_round_data_not_partial(self):
+        config = MarketConfig()
+        captured = {}
+
+        def callback(round_num, round_logs):
+            if round_num == 1:
+                captured["round_1"] = round_logs
+
+        result = run(
+            run_match(default_roster(), config, MatchConfig(n_rounds=1, seed=1), on_round_complete=callback)
+        )
+        # What the callback saw for round 1 should match what ended up in the final result.
+        final_round_1 = result.rounds[result.rounds["round_num"] == 1].sort_values("vendor_label")
+        callback_prices = sorted(log.price_clamped for log in captured["round_1"])
+        assert callback_prices == sorted(final_round_1["price_clamped"].tolist())
+
+    def test_no_callback_is_a_noop(self):
+        """Default behavior (no callback) must be unaffected."""
+        config = MarketConfig()
+        result = run(run_match(default_roster(), config, MatchConfig(n_rounds=2, seed=1)))
+        assert len(result.rounds) == 2 * config.n_vendors

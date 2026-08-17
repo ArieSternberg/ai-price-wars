@@ -69,6 +69,20 @@ def build_system_prompt(observation: Observation) -> str:
     )
 
 
+def _serialize_message(m) -> dict:
+    """A compliance-failure transcript entry: message type, text, and — critically —
+    which tools it called with what args. Content alone is often empty on a
+    tool-calling turn, which would otherwise hide exactly what a model was doing
+    with its tool-call budget."""
+    entry: dict = {"type": type(m).__name__, "content": getattr(m, "content", "")}
+    tool_calls = getattr(m, "tool_calls", None)
+    if tool_calls:
+        entry["tool_calls"] = [
+            {"name": tc.get("name"), "args": tc.get("args")} for tc in tool_calls
+        ]
+    return entry
+
+
 def _fallback_price(observation: Observation) -> float:
     """What the harness charges on a vendor's behalf after a compliance failure:
     hold at the last price it actually committed to, or split cost/price_cap if
@@ -142,10 +156,7 @@ class LLMVendor:
 
         # Compliance failure: exhausted the tool-call budget (or never called a tool
         # at all) without ever calling set_price. Log it, never silently retry.
-        transcript = tuple(
-            {"type": type(m).__name__, "content": getattr(m, "content", "")}
-            for m in final_state["messages"]
-        )
+        transcript = tuple(_serialize_message(m) for m in final_state["messages"])
         reason = (
             "produced no tool calls at all"
             if final_state["tool_call_count"] == 0

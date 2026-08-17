@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import random
 from dataclasses import dataclass
+from typing import Awaitable, Callable
 
 import pandas as pd
 
@@ -69,12 +71,18 @@ async def run_match(
     vendors: list[Vendor],
     market_config: MarketConfig,
     match_config: MatchConfig | None = None,
+    on_round_complete: Callable[[int, tuple["RoundLog", ...]], object] | None = None,
 ) -> MatchResult:
     """Play one full match and return its round-by-round log.
 
     `vendors[i]` is permanently paired with the i-th assigned label for the whole
     match — that pairing is what "stable label" means. What changes every round is
     only the *order* rivals are listed in each vendor's `rival_table`.
+
+    `on_round_complete(round_num, round_logs)`, if given, is called after each round
+    finishes — e.g. to print live progress while real API calls are in flight. It
+    may be sync or async (an awaitable return value is awaited); either way it runs
+    after that round's outcome is final, before the next round's decisions start.
     """
     if match_config is None:
         match_config = MatchConfig()
@@ -127,24 +135,30 @@ async def run_match(
 
         result = simulate_round(clamped_prices, market_config)
 
+        this_round_logs: list[RoundLog] = []
         for i, label in enumerate(labels):
             profit = float(result.profits[i])
             cumulative_profit[label] += profit
-            logs.append(
-                RoundLog(
-                    round_num=round_num,
-                    vendor_label=label,
-                    vendor_name=vendors[i].name,
-                    price_submitted=float(raw_prices[i]),
-                    price_clamped=float(clamped_prices[i]),
-                    was_out_of_range=float(raw_prices[i]) != clamped_prices[i],
-                    sold=int(result.sold[i]),
-                    profit=profit,
-                    cumulative_profit=cumulative_profit[label],
-                )
+            log_entry = RoundLog(
+                round_num=round_num,
+                vendor_label=label,
+                vendor_name=vendors[i].name,
+                price_submitted=float(raw_prices[i]),
+                price_clamped=float(clamped_prices[i]),
+                was_out_of_range=float(raw_prices[i]) != clamped_prices[i],
+                sold=int(result.sold[i]),
+                profit=profit,
+                cumulative_profit=cumulative_profit[label],
             )
+            this_round_logs.append(log_entry)
+            logs.append(log_entry)
             price_history[label].append(clamped_prices[i])
             profit_history[label].append(profit)
+
+        if on_round_complete is not None:
+            maybe_awaitable = on_round_complete(round_num, tuple(this_round_logs))
+            if inspect.isawaitable(maybe_awaitable):
+                await maybe_awaitable
 
     rounds_df = pd.DataFrame([dataclasses.asdict(r) for r in logs])
     return MatchResult(

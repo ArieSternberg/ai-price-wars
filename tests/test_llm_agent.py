@@ -138,6 +138,19 @@ class TestLLMVendorComplianceFailures:
         assert failure.tool_calls_used == 3
         assert "exhausted 3 tool call" in failure.reason
 
+    def test_transcript_captures_tool_calls_not_just_empty_content(self):
+        """A tool-calling AIMessage usually has empty .content — the transcript must
+        still record which tool was called with what args, or a compliance failure
+        is undiagnosable."""
+        model = ScriptedChatModel(responses=[tool_call_message("get_market_stats", {})])
+        vendor = LLMVendor(model=model, name="fake-model", max_tool_calls=2)
+        config = MarketConfig()
+        run(vendor.decide_price(make_observation(config, round_num=2)))
+        transcript = vendor.compliance_log[0].transcript
+        ai_entries_with_calls = [e for e in transcript if e.get("tool_calls")]
+        assert ai_entries_with_calls
+        assert ai_entries_with_calls[0]["tool_calls"][0]["name"] == "get_market_stats"
+
     def test_respects_custom_max_tool_calls(self):
         model = ScriptedChatModel(responses=[tool_call_message("get_market_stats", {})])
         vendor = LLMVendor(model=model, name="fake-model", max_tool_calls=1)
