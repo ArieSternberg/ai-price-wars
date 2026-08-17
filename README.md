@@ -47,7 +47,7 @@ nobody agreed to anything.
 | Phase | State |
 |---|---|
 | Market model + tests | ✅ done — 50 tests, [`mu` calibrated](results/mu_calibration.md) |
-| Tournament loop | not started |
+| Tournament loop | ✅ done — seeded/shuffled round loop, Parquet storage, scripted bots, [first price-path chart](results/figures/scripted_demo_price_path.png) |
 | Agent loop | not started |
 | Eval suite | not started |
 | Results | not started |

@@ -1,0 +1,27 @@
+{
+  "run_id": "scripted_demo",
+  "market_config": {
+    "cost": 3.0,
+    "n_shoppers": 100,
+    "mu": 1.5,
+    "p_walkaway": 8.0,
+    "n_vendors": 6,
+    "price_cap": 15.0
+  },
+  "match_config": {
+    "n_rounds": 30,
+    "seed": 42
+  },
+  "references": {
+    "competitive": 4.793089206045395,
+    "monopoly": 9.029815173568707
+  },
+  "labels": {
+    "Vendor D": "undercutter",
+    "Vendor B": "undercutter",
+    "Vendor C": "tit_for_tat",
+    "Vendor E": "constant_markup",
+    "Vendor A": "constant_markup",
+    "Vendor F": "random"
+  }
+}
