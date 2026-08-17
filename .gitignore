@@ -1,0 +1,37 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# Testing / tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Local run scratch — NOTE: results/ is intentionally committed (see CLAUDE.md),
+# this only excludes uncommitted local experiment scratch.
+scratch/
+*.duckdb
+*.duckdb.wal
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
