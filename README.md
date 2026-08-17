@@ -1,6 +1,12 @@
 # AI Price Wars
 
-**Six AI models run competing tomato stalls at the same farmers market. Who makes the most money — and what do they do to each other along the way?**
+**A market competition benchmark for AI models. Same brief, same costs, same customers — which
+model is actually best at pricing, reading the market, and running a profitable business?**
+
+Profit is the scoreboard, but the real test is business judgment — who reads the market
+correctly, who blinks first in a price war, who protects margin without pricing themselves out of
+it. The market mechanics — price, cost, demand — don't care what's being sold; tomatoes are the
+test case, not the point.
 
 > 🚧 In development. See [PLAN.md](PLAN.md) for the full spec.
 
@@ -20,8 +26,8 @@ to use — figuring that out is the whole point.
 
 ## What gets measured
 
-Profit is the scoreboard, but it isn't the interesting part. The repo scores *how each model
-plays*:
+Profit decides the leaderboard, but it isn't the whole test. The repo scores *how each model
+runs the business*:
 
 - **Strategy fingerprints** — every pricing decision is classified from the model's own reasoning
   (undercut, match, hold, punish, signal, retreat), rolled up per model.
