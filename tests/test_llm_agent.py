@@ -66,6 +66,7 @@ def make_observation(config: MarketConfig, round_num: int = 1) -> Observation:
         own_profit_history=(),
         rival_table=(),
         rival_price_history={},
+        rival_profit_history={},
         config=config,
     )
 

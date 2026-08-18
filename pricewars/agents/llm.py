@@ -100,11 +100,12 @@ def build_system_prompt(observation: Observation) -> str:
         f"Each round, every vendor sets a price between ${config.cost:.2f} and "
         f"${config.price_cap:.2f}. Customers prefer cheaper prices but aren't perfectly "
         f"price-sensitive, and some customers skip buying entirely if every price looks high. "
-        f"After each round, every vendor sees what every other vendor charged.\n\n"
-        f"You have tools to look up price history, market stats, and to simulate a "
-        f"hypothetical price before committing. Use them as much or as little as you find "
-        f"useful. When you're ready, call set_price exactly once with the price you want to "
-        f"charge this round — that ends your turn."
+        f"After each round, every vendor sees what every other vendor charged AND how much "
+        f"profit every vendor made — yours and every rival's.\n\n"
+        f"You have tools to look up any vendor's price and profit history, market stats, and "
+        f"to simulate a hypothetical price before committing. Use them as much or as little as "
+        f"you find useful. When you're ready, call set_price exactly once with the price you "
+        f"want to charge this round — that ends your turn."
     )
 
 

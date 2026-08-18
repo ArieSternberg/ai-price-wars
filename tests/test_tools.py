@@ -15,15 +15,21 @@ def make_observation(
     round_num: int = 4,
     own_history: tuple[float, ...] = (5.0, 4.8, 4.6),
     rival_table: tuple[RivalObservation, ...] = (
-        RivalObservation("Vendor B", 4.0),
-        RivalObservation("Vendor C", 6.0),
+        RivalObservation("Vendor B", 4.0, 20.0),
+        RivalObservation("Vendor C", 6.0, 12.0),
     ),
     rival_price_history: dict[str, tuple[float, ...]] | None = None,
+    rival_profit_history: dict[str, tuple[float, ...]] | None = None,
 ) -> Observation:
     if rival_price_history is None:
         rival_price_history = {
             "Vendor B": (5.0, 4.5, 4.0),
             "Vendor C": (5.0, 6.5, 6.0),
+        }
+    if rival_profit_history is None:
+        rival_profit_history = {
+            "Vendor B": (30.0, 25.0, 20.0),
+            "Vendor C": (10.0, 15.0, 12.0),
         }
     return Observation(
         round_num=round_num,
@@ -33,6 +39,7 @@ def make_observation(
         own_profit_history=(20.0, 18.0, 16.0),
         rival_table=rival_table,
         rival_price_history=rival_price_history,
+        rival_profit_history=rival_profit_history,
         config=config,
     )
 
@@ -50,9 +57,9 @@ class TestGetPriceHistory:
         result = get_tool(tools, "get_price_history").invoke(
             {"vendor_label": "Vendor A", "n_rounds": 15}
         )
-        assert "round 1: $5.00" in result
-        assert "round 2: $4.80" in result
-        assert "round 3: $4.60" in result
+        assert "round 1: $5.00 (profit $20.00)" in result
+        assert "round 2: $4.80 (profit $18.00)" in result
+        assert "round 3: $4.60 (profit $16.00)" in result
 
     def test_rival_history(self):
         config = MarketConfig()
@@ -62,8 +69,8 @@ class TestGetPriceHistory:
         result = get_tool(tools, "get_price_history").invoke(
             {"vendor_label": "Vendor B", "n_rounds": 15}
         )
-        assert "round 1: $5.00" in result
-        assert "round 3: $4.00" in result
+        assert "round 1: $5.00 (profit $30.00)" in result
+        assert "round 3: $4.00 (profit $20.00)" in result
 
     def test_respects_n_rounds(self):
         config = MarketConfig()
@@ -115,8 +122,9 @@ class TestGetMarketStats:
         call_log: list[ToolCallLog] = []
         tools, _ = build_tools(obs, call_log)
         result = get_tool(tools, "get_market_stats").invoke({})
-        assert "$5.00" in result  # average
+        assert "$5.00" in result  # average price
         assert "$4.00-$6.00" in result
+        assert "$16.00" in result  # average profit: (20.0 + 12.0) / 2
 
     def test_identifies_undercutters(self):
         config = MarketConfig()
@@ -150,7 +158,10 @@ class TestSimulatePrice:
         config = MarketConfig(n_vendors=3)
         obs = make_observation(
             config,
-            rival_table=(RivalObservation("Vendor B", 4.0), RivalObservation("Vendor C", 6.0)),
+            rival_table=(
+                RivalObservation("Vendor B", 4.0, 0.0),
+                RivalObservation("Vendor C", 6.0, 0.0),
+            ),
         )
         call_log: list[ToolCallLog] = []
         tools, _ = build_tools(obs, call_log)

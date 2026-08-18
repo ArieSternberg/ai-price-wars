@@ -106,7 +106,7 @@ async def run_match(
             rival_labels = [l for l in labels if l != label]
             rng.shuffle(rival_labels)  # fresh row order every round; identity stays put
             rival_table = tuple(
-                RivalObservation(label=rl, price=price_history[rl][-1])
+                RivalObservation(label=rl, price=price_history[rl][-1], profit=profit_history[rl][-1])
                 for rl in rival_labels
                 if price_history[rl]  # empty in round 1 — no history to show yet
             )
@@ -119,6 +119,7 @@ async def run_match(
                     own_profit_history=tuple(profit_history[label]),
                     rival_table=rival_table,
                     rival_price_history={l: tuple(price_history[l]) for l in rival_labels},
+                    rival_profit_history={l: tuple(profit_history[l]) for l in rival_labels},
                     config=market_config,
                 )
             )

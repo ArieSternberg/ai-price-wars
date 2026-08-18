@@ -20,6 +20,7 @@ def make_observation(config: MarketConfig, rival_table: tuple[RivalObservation, 
         own_profit_history=(50.0,),
         rival_table=rival_table,
         rival_price_history={},
+        rival_profit_history={},
         config=config,
     )
 
@@ -38,14 +39,14 @@ class TestUndercutterBot:
     def test_undercuts_cheapest_rival(self):
         config = MarketConfig()
         bot = UndercutterBot(undercut=0.10)
-        rivals = (RivalObservation("Vendor B", 6.0), RivalObservation("Vendor C", 5.0))
+        rivals = (RivalObservation("Vendor B", 6.0, 0.0), RivalObservation("Vendor C", 5.0, 0.0))
         price = run(bot.decide_price(make_observation(config, rivals)))
         assert price == pytest.approx(4.90)
 
     def test_never_prices_below_cost(self):
         config = MarketConfig()
         bot = UndercutterBot(undercut=1.0)
-        rivals = (RivalObservation("Vendor B", config.cost + 0.5),)
+        rivals = (RivalObservation("Vendor B", config.cost + 0.5, 0.0),)
         price = run(bot.decide_price(make_observation(config, rivals)))
         assert price == config.cost
 
@@ -61,9 +62,9 @@ class TestTitForTatBot:
         config = MarketConfig()
         bot = TitForTatBot()
         rivals = (
-            RivalObservation("Vendor B", 4.0),
-            RivalObservation("Vendor C", 6.0),
-            RivalObservation("Vendor D", 5.0),
+            RivalObservation("Vendor B", 4.0, 0.0),
+            RivalObservation("Vendor C", 6.0, 0.0),
+            RivalObservation("Vendor D", 5.0, 0.0),
         )
         price = run(bot.decide_price(make_observation(config, rivals)))
         assert price == pytest.approx(5.0)
@@ -73,7 +74,7 @@ class TestConstantMarkupBot:
     def test_ignores_rivals(self):
         config = MarketConfig()
         bot = ConstantMarkupBot(markup=2.5)
-        rivals = (RivalObservation("Vendor B", 3.5),)
+        rivals = (RivalObservation("Vendor B", 3.5, 0.0),)
         price_no_rivals = run(bot.decide_price(make_observation(config)))
         price_with_rivals = run(bot.decide_price(make_observation(config, rivals)))
         assert price_no_rivals == price_with_rivals == config.cost + 2.5
