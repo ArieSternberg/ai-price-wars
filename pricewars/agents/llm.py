@@ -33,6 +33,7 @@ from pricewars.tools import ToolCallLog, build_tools
 __all__ = [
     "LLMVendor",
     "ComplianceFailure",
+    "DecisionRecord",
     "build_system_prompt",
     "DEFAULT_MAX_TOOL_CALLS",
     "RATE_LIMIT_MAX_RETRIES",
@@ -63,6 +64,22 @@ class ComplianceFailure:
     reason: str
     tool_calls_used: int
     transcript: tuple[dict, ...]
+
+
+@dataclass(frozen=True)
+class DecisionRecord:
+    """Full record of one round's decision — tool calls made, reasoning text, and
+    the committed price. Kept for *every* round, not just failures: PLAN.md calls
+    reasoning text "the qualitative payload of the project," and that's lost the
+    moment a successful decision's trace is thrown away instead of kept.
+    """
+
+    round_num: int
+    price: float
+    was_compliance_failure: bool
+    tool_calls: tuple[dict, ...]  # [{"name": ..., "args": ..., "result": ...}, ...]
+    reasoning: str  # concatenated non-empty AIMessage text, in order
+    transcript: tuple[dict, ...]  # every message in the round, serialized
 
 
 class AgentState(TypedDict):
@@ -103,6 +120,18 @@ def _serialize_message(m) -> dict:
             {"name": tc.get("name"), "args": tc.get("args")} for tc in tool_calls
         ]
     return entry
+
+
+def _extract_reasoning(messages) -> str:
+    """Concatenate every non-empty AIMessage text segment, in order. A model often
+    narrates across several turns interleaved with tool calls, not just in one
+    final message, so this isn't just "the last message's content"."""
+    parts = [
+        m.content
+        for m in messages
+        if isinstance(m, AIMessage) and isinstance(m.content, str) and m.content.strip()
+    ]
+    return "\n\n".join(parts)
 
 
 def _seconds_until_rate_limit_reset(error: openai.RateLimitError) -> float | None:
@@ -184,6 +213,7 @@ class LLMVendor:
     name: str
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS
     compliance_log: list[ComplianceFailure] = field(default_factory=list)
+    decision_log: list[DecisionRecord] = field(default_factory=list)
 
     async def decide_price(self, observation: Observation) -> float:
         call_log: list[ToolCallLog] = []
@@ -237,12 +267,30 @@ class LLMVendor:
 
         final_state = await compiled.ainvoke(initial_state)
 
+        # Built once, used either way — this is the full record of what the model
+        # actually did this round, kept regardless of outcome (see DecisionRecord).
+        transcript = tuple(_serialize_message(m) for m in final_state["messages"])
+        reasoning = _extract_reasoning(final_state["messages"])
+        tool_calls = tuple(
+            {"name": c.tool_name, "args": c.args, "result": c.result} for c in call_log
+        )
+
         if committed["price"] is not None:
-            return committed["price"]
+            price = committed["price"]
+            self.decision_log.append(
+                DecisionRecord(
+                    round_num=observation.round_num,
+                    price=price,
+                    was_compliance_failure=False,
+                    tool_calls=tool_calls,
+                    reasoning=reasoning,
+                    transcript=transcript,
+                )
+            )
+            return price
 
         # Compliance failure: exhausted the tool-call budget (or never called a tool
         # at all) without ever calling set_price. Log it, never silently retry.
-        transcript = tuple(_serialize_message(m) for m in final_state["messages"])
         reason = (
             "produced no tool calls at all"
             if final_state["tool_call_count"] == 0
@@ -259,4 +307,15 @@ class LLMVendor:
         logger.warning(
             "%s compliance failure at round %d: %s", self.name, observation.round_num, reason
         )
-        return _fallback_price(observation)
+        price = _fallback_price(observation)
+        self.decision_log.append(
+            DecisionRecord(
+                round_num=observation.round_num,
+                price=price,
+                was_compliance_failure=True,
+                tool_calls=tool_calls,
+                reasoning=reasoning,
+                transcript=transcript,
+            )
+        )
+        return price

@@ -58,6 +58,8 @@ price_chart_placeholder = col_price.empty()
 temp_chart_placeholder = col_temp.empty()
 standings_placeholder = st.empty()
 compliance_placeholder = st.empty()
+decision_log_header_placeholder = st.empty()
+decision_log_container = st.container()
 
 
 def build_roster(use_llm: bool, model_id: str) -> list:
@@ -87,6 +89,8 @@ def run_live_match(n_rounds: int, seed: int, use_llm: bool, model_id: str) -> No
     price_rows: list[dict] = []
     temp_rows: list[dict] = []
     llm_vendor = roster[0] if use_llm else None
+    if llm_vendor is not None:
+        decision_log_header_placeholder.subheader("🧠 Agent decision log")
 
     def market_temperature_of(round_logs: tuple[RoundLog, ...]) -> float:
         from pricewars.market import market_temperature
@@ -133,6 +137,26 @@ def run_live_match(n_rounds: int, seed: int, use_llm: bool, model_id: str) -> No
                 "see the fallback flags in the table above.",
                 icon="⚠️",
             )
+
+        if llm_vendor is not None:
+            record = next(
+                (r for r in llm_vendor.decision_log if r.round_num == round_num), None
+            )
+            if record is not None:
+                icon = "⚠️" if record.was_compliance_failure else "✅"
+                title = f"{icon} Round {round_num} — {llm_vendor.name} priced ${record.price:.2f}"
+                if record.was_compliance_failure:
+                    title += " (compliance fallback, not a real decision)"
+                with decision_log_container.expander(title, expanded=False):
+                    st.markdown("**Reasoning:**")
+                    st.markdown(record.reasoning if record.reasoning else "*(no reasoning text — went straight to tool calls)*")
+                    st.markdown(f"**Tool calls ({len(record.tool_calls)}):**")
+                    if record.tool_calls:
+                        st.dataframe(
+                            pd.DataFrame(record.tool_calls), use_container_width=True, hide_index=True
+                        )
+                    else:
+                        st.caption("None.")
 
     status_placeholder.info("Running...")
     asyncio.run(run_match(roster, config, match_config, on_round_complete=on_round))

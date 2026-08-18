@@ -182,3 +182,77 @@ class TestBuildSystemPrompt:
         lowered = prompt.lower()
         for banned in ["undercut", "collude", "punish", "retaliate", "cartel"]:
             assert banned not in lowered
+
+
+class TestLLMVendorDecisionLog:
+    """DecisionRecord is PLAN.md's "reasoning text persisted with every decision" —
+    kept every round, not just on compliance failures."""
+
+    def test_successful_round_is_recorded(self):
+        model = ScriptedChatModel(
+            responses=[
+                AIMessage(
+                    content="Checking the market before committing.",
+                    tool_calls=[{"name": "get_market_stats", "args": {}, "id": "call_1"}],
+                ),
+                tool_call_message("set_price", {"price": 5.25}, call_id="call_2"),
+            ]
+        )
+        vendor = LLMVendor(model=model, name="fake-model")
+        config = MarketConfig()
+        price = run(vendor.decide_price(make_observation(config)))
+
+        assert price == 5.25
+        assert len(vendor.decision_log) == 1
+        record = vendor.decision_log[0]
+        assert record.round_num == 1
+        assert record.price == 5.25
+        assert record.was_compliance_failure is False
+        assert record.reasoning == "Checking the market before committing."
+        # Both the investigation call and set_price itself are logged tool calls.
+        assert [tc["name"] for tc in record.tool_calls] == ["get_market_stats", "set_price"]
+        assert record.transcript  # non-empty
+
+    def test_compliance_failure_is_also_recorded(self):
+        model = ScriptedChatModel(
+            responses=[AIMessage(content="I won't call any tools.", tool_calls=[])]
+        )
+        vendor = LLMVendor(model=model, name="fake-model")
+        config = MarketConfig()
+        obs = make_observation(config, round_num=3)  # own_price_history = (5.0,)
+        price = run(vendor.decide_price(obs))
+
+        assert price == 5.0  # fallback
+        assert len(vendor.decision_log) == 1
+        record = vendor.decision_log[0]
+        assert record.was_compliance_failure is True
+        assert record.price == 5.0
+        assert record.reasoning == "I won't call any tools."
+
+    def test_accumulates_across_multiple_rounds(self):
+        model = ScriptedChatModel(responses=[tool_call_message("set_price", {"price": 4.0})])
+        vendor = LLMVendor(model=model, name="fake-model")
+        config = MarketConfig()
+        run(vendor.decide_price(make_observation(config, round_num=1)))
+        run(vendor.decide_price(make_observation(config, round_num=2)))
+        assert [r.round_num for r in vendor.decision_log] == [1, 2]
+
+    def test_reasoning_concatenates_multiple_ai_turns(self):
+        model = ScriptedChatModel(
+            responses=[
+                AIMessage(
+                    content="First, let me check history.",
+                    tool_calls=[{"name": "get_market_stats", "args": {}, "id": "call_1"}],
+                ),
+                AIMessage(
+                    content="Now I'll commit.",
+                    tool_calls=[{"name": "set_price", "args": {"price": 6.0}, "id": "call_2"}],
+                ),
+            ]
+        )
+        vendor = LLMVendor(model=model, name="fake-model")
+        config = MarketConfig()
+        run(vendor.decide_price(make_observation(config)))
+        reasoning = vendor.decision_log[0].reasoning
+        assert "First, let me check history." in reasoning
+        assert "Now I'll commit." in reasoning
