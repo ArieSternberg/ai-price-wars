@@ -71,7 +71,7 @@ def build_roster(use_llm: bool, model_id: str) -> list:
     if use_llm:
         from pricewars.agents.providers import build_openrouter_vendor
 
-        llm_vendor = build_openrouter_vendor(model_id, max_tool_calls=8)
+        llm_vendor = build_openrouter_vendor(model_id)  # uses DEFAULT_MAX_TOOL_CALLS
         return [llm_vendor, *bots]
     return [*bots, RandomBot(seed=7)]
 

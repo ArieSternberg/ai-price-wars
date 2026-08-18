@@ -13,10 +13,14 @@ that would hide the exact failure rate PLAN.md wants measured.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
+import time
 from dataclasses import dataclass, field
 from typing import Annotated, TypedDict
 
+import openai
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
@@ -26,11 +30,29 @@ from langgraph.prebuilt import ToolNode
 from pricewars.agents.base import Observation
 from pricewars.tools import ToolCallLog, build_tools
 
-__all__ = ["LLMVendor", "ComplianceFailure", "build_system_prompt", "DEFAULT_MAX_TOOL_CALLS"]
+__all__ = [
+    "LLMVendor",
+    "ComplianceFailure",
+    "build_system_prompt",
+    "DEFAULT_MAX_TOOL_CALLS",
+    "RATE_LIMIT_MAX_RETRIES",
+]
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOOL_CALLS = 8  # PLAN.md: "Hard cap on tool calls per round ... to bound cost."
+DEFAULT_MAX_TOOL_CALLS = 20  # PLAN.md: "Hard cap on tool calls per round ... to bound cost."
+# Started at 8; live testing showed that's structurally too tight for a 6-vendor market —
+# checking every rival's price history once already costs 5 calls, leaving no room for
+# market stats, simulation, or the set_price commit itself. See PLAN.md's note on this.
+
+# Rate-limit retry. Discovered necessary the hard way: a new OpenRouter account gets a
+# ~10 req/min per-model throttle (openrouter_new_account), and without this a single
+# 429 crashed the entire match — including every scripted bot that had nothing to do
+# with it. This is not a budget guard (that's phase 4's job); it's the minimum needed
+# for a match to survive a transient throttle at all.
+RATE_LIMIT_MAX_RETRIES = 5
+RATE_LIMIT_DEFAULT_BACKOFF_SECONDS = 5.0
+RATE_LIMIT_MAX_BACKOFF_SECONDS = 90.0
 
 
 @dataclass(frozen=True)
@@ -83,6 +105,68 @@ def _serialize_message(m) -> dict:
     return entry
 
 
+def _seconds_until_rate_limit_reset(error: openai.RateLimitError) -> float | None:
+    """Best-effort read of when a rate limit clears, from whatever OpenRouter gave
+    us. Checks real HTTP response headers first, then the `X-RateLimit-Reset`
+    OpenRouter embeds inside the JSON error body itself (where it actually showed up
+    in practice). Returns None — meaning "unknown, use plain backoff" — if neither is
+    present or parseable, rather than guessing at a number that isn't there.
+    """
+    reset_ms = None
+    headers = getattr(error, "response", None)
+    headers = getattr(headers, "headers", None)
+    if headers and "X-RateLimit-Reset" in headers:
+        try:
+            reset_ms = int(headers["X-RateLimit-Reset"])
+        except (TypeError, ValueError):
+            reset_ms = None
+
+    if reset_ms is None:
+        try:
+            body = getattr(error, "body", None) or {}
+            reset_ms = int(body["error"]["metadata"]["headers"]["X-RateLimit-Reset"])
+        except (TypeError, ValueError, KeyError):
+            reset_ms = None
+
+    if reset_ms is None:
+        return None
+    return max(reset_ms / 1000.0 - time.time(), 0.0)
+
+
+async def _invoke_with_retry(
+    model_with_tools, messages: list, *, vendor_name: str = "", max_retries: int = RATE_LIMIT_MAX_RETRIES
+) -> AIMessage:
+    """Call the model, retrying on rate limits instead of crashing the whole match.
+
+    Waits until the provider's own reset time if it gave us one, otherwise falls
+    back to exponential backoff with jitter. After `max_retries` the error
+    propagates — this is resilience against transient throttling, not an infinite
+    retry loop, and it's still one real vendor failing loudly if the account is
+    fundamentally rate-limited beyond what waiting can fix.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return await model_with_tools.ainvoke(messages)
+        except openai.RateLimitError as e:
+            if attempt == max_retries:
+                raise
+            wait_seconds = _seconds_until_rate_limit_reset(e)
+            if wait_seconds is None:
+                wait_seconds = min(
+                    RATE_LIMIT_DEFAULT_BACKOFF_SECONDS * (2**attempt), RATE_LIMIT_MAX_BACKOFF_SECONDS
+                )
+            wait_seconds += random.uniform(0, 1.0)  # jitter, avoid retry stampedes
+            logger.warning(
+                "%s hit a rate limit (attempt %d/%d) — waiting %.1fs before retrying",
+                vendor_name,
+                attempt + 1,
+                max_retries,
+                wait_seconds,
+            )
+            await asyncio.sleep(wait_seconds)
+    raise AssertionError("unreachable — loop above always returns or raises")
+
+
 def _fallback_price(observation: Observation) -> float:
     """What the harness charges on a vendor's behalf after a compliance failure:
     hold at the last price it actually committed to, or split cost/price_cap if
@@ -121,7 +205,9 @@ class LLMVendor:
             return "agent"
 
         async def agent_node(state: AgentState) -> dict:
-            response = await model_with_tools.ainvoke(state["messages"])
+            response = await _invoke_with_retry(
+                model_with_tools, state["messages"], vendor_name=self.name
+            )
             return {"messages": [response]}
 
         async def tools_node(state: AgentState) -> dict:

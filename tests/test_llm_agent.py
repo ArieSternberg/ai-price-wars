@@ -158,8 +158,10 @@ class TestLLMVendorComplianceFailures:
         run(vendor.decide_price(make_observation(config, round_num=2)))
         assert vendor.compliance_log[0].tool_calls_used == 1
 
-    def test_default_max_tool_calls_is_eight(self):
-        assert DEFAULT_MAX_TOOL_CALLS == 8
+    def test_default_max_tool_calls_is_twenty(self):
+        # Raised from 8 after live testing: a 6-vendor market needs 5 calls just to
+        # check every rival's history once, before stats, simulation, or set_price.
+        assert DEFAULT_MAX_TOOL_CALLS == 20
 
 
 class TestBuildSystemPrompt:
