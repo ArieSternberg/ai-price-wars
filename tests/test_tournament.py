@@ -162,3 +162,69 @@ class TestOnRoundComplete:
         config = MarketConfig()
         result = run(run_match(default_roster(), config, MatchConfig(n_rounds=2, seed=1)))
         assert len(result.rounds) == 2 * config.n_vendors
+
+
+class TestRevealRivalProfit:
+    def test_defaults_to_visible(self):
+        config = MarketConfig()
+        seen: list[Observation] = []
+
+        class SpyBot:
+            name = "spy"
+
+            async def decide_price(self, observation: Observation) -> float:
+                seen.append(observation)
+                return 5.0
+
+        roster = [SpyBot()] + default_roster()[1:]
+        run(run_match(roster, config, MatchConfig(n_rounds=2, seed=1)))
+        round_2_obs = [o for o in seen if o.round_num == 2][0]
+        assert round_2_obs.reveal_rival_profit is True
+        assert round_2_obs.rival_table[0].profit is not None
+        assert round_2_obs.rival_profit_history  # non-empty
+
+    def test_hidden_when_disabled(self):
+        config = MarketConfig()
+        seen: list[Observation] = []
+
+        class SpyBot:
+            name = "spy"
+
+            async def decide_price(self, observation: Observation) -> float:
+                seen.append(observation)
+                return 5.0
+
+        roster = [SpyBot()] + default_roster()[1:]
+        run(
+            run_match(
+                roster, config, MatchConfig(n_rounds=2, seed=1), reveal_rival_profit=False
+            )
+        )
+        round_2_obs = [o for o in seen if o.round_num == 2][0]
+        assert round_2_obs.reveal_rival_profit is False
+        assert all(r.profit is None for r in round_2_obs.rival_table)
+        assert round_2_obs.rival_profit_history == {}
+        # Own profit is unaffected by hiding rivals' profit.
+        assert round_2_obs.own_profit_history != ()
+
+
+class TestVendorLabels:
+    def test_length_matches_roster(self):
+        config = MarketConfig()
+        result = run(run_match(default_roster(), config, MatchConfig(n_rounds=1, seed=1)))
+        assert len(result.vendor_labels) == config.n_vendors
+
+    def test_index_matches_input_roster_order(self):
+        """vendor_labels[i] is the label for vendors[i] — the input order, not the
+        shuffled one — even with duplicate-named vendors."""
+        config = MarketConfig()
+        roster = [ConstantMarkupBot(markup=1.0, name=f"dup-{i}") for i in range(config.n_vendors)]
+        result = run(run_match(roster, config, MatchConfig(n_rounds=1, seed=1)))
+        for i, vendor in enumerate(roster):
+            label = result.vendor_labels[i]
+            assert result.labels[label] == vendor.name
+
+    def test_consistent_with_labels_dict(self):
+        config = MarketConfig()
+        result = run(run_match(default_roster(), config, MatchConfig(n_rounds=1, seed=1)))
+        assert set(result.vendor_labels) == set(result.labels.keys())

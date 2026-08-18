@@ -57,7 +57,9 @@ class ScriptedChatModel(BaseChatModel):
         return "scripted-fake"
 
 
-def make_observation(config: MarketConfig, round_num: int = 1) -> Observation:
+def make_observation(
+    config: MarketConfig, round_num: int = 1, reveal_rival_profit: bool = True
+) -> Observation:
     return Observation(
         round_num=round_num,
         n_rounds=30,
@@ -67,6 +69,7 @@ def make_observation(config: MarketConfig, round_num: int = 1) -> Observation:
         rival_table=(),
         rival_price_history={},
         rival_profit_history={},
+        reveal_rival_profit=reveal_rival_profit,
         config=config,
     )
 
@@ -183,6 +186,17 @@ class TestBuildSystemPrompt:
         lowered = prompt.lower()
         for banned in ["undercut", "collude", "punish", "retaliate", "cartel"]:
             assert banned not in lowered
+
+    def test_mentions_rival_profit_when_visible(self):
+        config = MarketConfig()
+        prompt = build_system_prompt(make_observation(config, reveal_rival_profit=True))
+        assert "every rival's" in prompt
+
+    def test_says_rival_profit_hidden_when_not_visible(self):
+        config = MarketConfig()
+        prompt = build_system_prompt(make_observation(config, reveal_rival_profit=False))
+        assert "do not see rivals' profit" in prompt
+        assert "every rival's" not in prompt
 
 
 class TestLLMVendorDecisionLog:

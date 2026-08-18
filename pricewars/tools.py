@@ -75,12 +75,22 @@ def build_tools(
         else:
             is_own = vendor_label == observation.own_label
             price_history = observation.own_price_history if is_own else observation.rival_price_history[vendor_label]
-            profit_history = observation.own_profit_history if is_own else observation.rival_profit_history[vendor_label]
+            # Own profit is always visible; a rival's is only there if this match
+            # reveals it (observation.rival_profit_history is {} entirely if not).
+            profit_history = (
+                observation.own_profit_history if is_own else observation.rival_profit_history.get(vendor_label)
+            )
             recent_prices = price_history[-n_rounds:] if n_rounds > 0 else ()
-            recent_profits = profit_history[-len(recent_prices):] if recent_prices else ()
             if not recent_prices:
                 result = f"{vendor_label} has no price history yet (this is round {observation.round_num})."
+            elif profit_history is None:
+                start_round = len(price_history) - len(recent_prices) + 1
+                trail = ", ".join(
+                    f"round {start_round + i}: ${p:.2f}" for i, p in enumerate(recent_prices)
+                )
+                result = f"{vendor_label}'s last {len(recent_prices)} round(s): {trail} (profit not visible)"
             else:
+                recent_profits = profit_history[-len(recent_prices):]
                 start_round = len(price_history) - len(recent_prices) + 1
                 trail = ", ".join(
                     f"round {start_round + i}: ${p:.2f} (profit ${pr:.2f})"
@@ -99,20 +109,24 @@ def build_tools(
             result = "No rival prices exist yet — this is round 1."
         else:
             prices = [r.price for r in observation.rival_table]
-            profits = [r.profit for r in observation.rival_table]
             avg_price = sum(prices) / len(prices)
             lo, hi = min(prices), max(prices)
-            avg_profit = sum(profits) / len(profits)
             cutters = sorted(
                 label
                 for label, hist in observation.rival_price_history.items()
                 if len(hist) >= 2 and hist[-1] < hist[-2]
             )
             cutters_str = ", ".join(cutters) if cutters else "none"
+            if observation.reveal_rival_profit:
+                profits = [r.profit for r in observation.rival_table]
+                avg_profit = sum(profits) / len(profits)
+                profit_clause = f", average rival profit ${avg_profit:.2f}"
+            else:
+                profit_clause = ""
             result = (
                 f"Last round ({observation.round_num - 1}): average rival price ${avg_price:.2f}, "
-                f"range ${lo:.2f}-${hi:.2f}, average rival profit ${avg_profit:.2f}. Vendors who "
-                f"cut their price since the round before that: {cutters_str}."
+                f"range ${lo:.2f}-${hi:.2f}{profit_clause}. Vendors who cut their price since the "
+                f"round before that: {cutters_str}."
             )
         call_log.append(ToolCallLog("get_market_stats", {}, result))
         return result
@@ -152,8 +166,8 @@ def build_tools(
             func=_get_price_history,
             name="get_price_history",
             description=(
-                "Look up a specific vendor's price AND profit over its last N rounds, "
-                "by label (yours or a rival's)."
+                "Look up a specific vendor's price (and profit, if visible this match) "
+                "over its last N rounds, by label (yours or a rival's)."
             ),
             args_schema=GetPriceHistoryInput,
         ),
@@ -162,7 +176,8 @@ def build_tools(
             name="get_market_stats",
             description=(
                 "Get last round's average rival price, price range, average rival "
-                "profit, and which vendors cut their price since the round before that."
+                "profit (if visible this match), and which vendors cut their price "
+                "since the round before that."
             ),
         ),
         StructuredTool.from_function(

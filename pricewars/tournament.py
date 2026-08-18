@@ -55,6 +55,10 @@ class RoundLog:
 class MatchResult:
     rounds: pd.DataFrame  # one row per (round, vendor) — see RoundLog fields
     labels: dict[str, str]  # stable vendor_label -> vendor_name for the whole match
+    vendor_labels: tuple[str, ...]  # vendor_labels[i] is the label assigned to the i-th
+    # input vendor (same order as the `vendors` list passed to run_match) — use this,
+    # not `.name`, to unambiguously match a specific vendor OBJECT back to its label
+    # when two vendors share a name (e.g. the same model in two slots).
     market_config: MarketConfig
     match_config: MatchConfig
     references: MarketReferences
@@ -72,6 +76,7 @@ async def run_match(
     market_config: MarketConfig,
     match_config: MatchConfig | None = None,
     on_round_complete: Callable[[int, tuple["RoundLog", ...]], object] | None = None,
+    reveal_rival_profit: bool = True,
 ) -> MatchResult:
     """Play one full match and return its round-by-round log.
 
@@ -83,6 +88,11 @@ async def run_match(
     finishes — e.g. to print live progress while real API calls are in flight. It
     may be sync or async (an awaitable return value is awaited); either way it runs
     after that round's outcome is final, before the next round's decisions start.
+
+    `reveal_rival_profit` controls whether a vendor's Observation includes rivals'
+    profit alongside their prices — an explicit experimental condition, not a
+    realism claim (see RivalObservation's docstring). Every vendor always sees its
+    own profit regardless of this flag.
     """
     if match_config is None:
         match_config = MatchConfig()
@@ -106,7 +116,11 @@ async def run_match(
             rival_labels = [l for l in labels if l != label]
             rng.shuffle(rival_labels)  # fresh row order every round; identity stays put
             rival_table = tuple(
-                RivalObservation(label=rl, price=price_history[rl][-1], profit=profit_history[rl][-1])
+                RivalObservation(
+                    label=rl,
+                    price=price_history[rl][-1],
+                    profit=profit_history[rl][-1] if reveal_rival_profit else None,
+                )
                 for rl in rival_labels
                 if price_history[rl]  # empty in round 1 — no history to show yet
             )
@@ -119,7 +133,12 @@ async def run_match(
                     own_profit_history=tuple(profit_history[label]),
                     rival_table=rival_table,
                     rival_price_history={l: tuple(price_history[l]) for l in rival_labels},
-                    rival_profit_history={l: tuple(profit_history[l]) for l in rival_labels},
+                    rival_profit_history=(
+                        {l: tuple(profit_history[l]) for l in rival_labels}
+                        if reveal_rival_profit
+                        else {}
+                    ),
+                    reveal_rival_profit=reveal_rival_profit,
                     config=market_config,
                 )
             )
@@ -165,6 +184,7 @@ async def run_match(
     return MatchResult(
         rounds=rounds_df,
         labels={label: vendor.name for label, vendor in zip(labels, vendors)},
+        vendor_labels=tuple(labels),
         market_config=market_config,
         match_config=match_config,
         references=references,

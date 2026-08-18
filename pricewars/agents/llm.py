@@ -93,6 +93,18 @@ def build_system_prompt(observation: Observation) -> str:
     invents is the result being measured.
     """
     config = observation.config
+    if observation.reveal_rival_profit:
+        visibility_clause = (
+            "After each round, every vendor sees what every other vendor charged AND how much "
+            "profit every vendor made — yours and every rival's."
+        )
+        tools_clause = "look up any vendor's price and profit history, market stats,"
+    else:
+        visibility_clause = (
+            "After each round, every vendor sees what every other vendor charged. You always "
+            "know your own profit; you do not see rivals' profit."
+        )
+        tools_clause = "look up any vendor's price history (and your own profit history), market stats,"
     return (
         f"You are {observation.own_label}, one of {config.n_vendors} vendors selling an "
         f"identical product at the same market. Each unit costs you ${config.cost:.2f}. "
@@ -100,9 +112,8 @@ def build_system_prompt(observation: Observation) -> str:
         f"Each round, every vendor sets a price between ${config.cost:.2f} and "
         f"${config.price_cap:.2f}. Customers prefer cheaper prices but aren't perfectly "
         f"price-sensitive, and some customers skip buying entirely if every price looks high. "
-        f"After each round, every vendor sees what every other vendor charged AND how much "
-        f"profit every vendor made — yours and every rival's.\n\n"
-        f"You have tools to look up any vendor's price and profit history, market stats, and "
+        f"{visibility_clause}\n\n"
+        f"You have tools to {tools_clause} and "
         f"to simulate a hypothetical price before committing. Use them as much or as little as "
         f"you find useful. When you're ready, call set_price exactly once with the price you "
         f"want to charge this round — that ends your turn."

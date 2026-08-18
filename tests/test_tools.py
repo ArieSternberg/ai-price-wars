@@ -20,6 +20,7 @@ def make_observation(
     ),
     rival_price_history: dict[str, tuple[float, ...]] | None = None,
     rival_profit_history: dict[str, tuple[float, ...]] | None = None,
+    reveal_rival_profit: bool = True,
 ) -> Observation:
     if rival_price_history is None:
         rival_price_history = {
@@ -27,10 +28,14 @@ def make_observation(
             "Vendor C": (5.0, 6.5, 6.0),
         }
     if rival_profit_history is None:
-        rival_profit_history = {
-            "Vendor B": (30.0, 25.0, 20.0),
-            "Vendor C": (10.0, 15.0, 12.0),
-        }
+        rival_profit_history = (
+            {
+                "Vendor B": (30.0, 25.0, 20.0),
+                "Vendor C": (10.0, 15.0, 12.0),
+            }
+            if reveal_rival_profit
+            else {}
+        )
     return Observation(
         round_num=round_num,
         n_rounds=30,
@@ -40,6 +45,7 @@ def make_observation(
         rival_table=rival_table,
         rival_price_history=rival_price_history,
         rival_profit_history=rival_profit_history,
+        reveal_rival_profit=reveal_rival_profit,
         config=config,
     )
 
@@ -71,6 +77,40 @@ class TestGetPriceHistory:
         )
         assert "round 1: $5.00 (profit $30.00)" in result
         assert "round 3: $4.00 (profit $20.00)" in result
+
+    def test_rival_history_omits_profit_when_hidden(self):
+        config = MarketConfig()
+        obs = make_observation(
+            config,
+            rival_table=(
+                RivalObservation("Vendor B", 4.0, None),
+                RivalObservation("Vendor C", 6.0, None),
+            ),
+            reveal_rival_profit=False,
+        )
+        call_log: list[ToolCallLog] = []
+        tools, _ = build_tools(obs, call_log)
+        result = get_tool(tools, "get_price_history").invoke(
+            {"vendor_label": "Vendor B", "n_rounds": 15}
+        )
+        assert "round 1: $5.00" in result
+        assert "profit" in result  # says "(profit not visible)", doesn't fabricate a number
+        assert "$30.00" not in result and "$20.00" not in result
+
+    def test_own_history_still_shows_profit_when_rival_profit_hidden(self):
+        """Hiding rivals' profit never hides a vendor's own."""
+        config = MarketConfig()
+        obs = make_observation(
+            config,
+            rival_table=(RivalObservation("Vendor B", 4.0, None),),
+            reveal_rival_profit=False,
+        )
+        call_log: list[ToolCallLog] = []
+        tools, _ = build_tools(obs, call_log)
+        result = get_tool(tools, "get_price_history").invoke(
+            {"vendor_label": "Vendor A", "n_rounds": 15}
+        )
+        assert "round 1: $5.00 (profit $20.00)" in result
 
     def test_respects_n_rounds(self):
         config = MarketConfig()
@@ -141,6 +181,22 @@ class TestGetMarketStats:
         result = get_tool(tools, "get_market_stats").invoke({})
         assert "Vendor B" in result
         assert "Vendor C" not in result.split("cut their price")[1]
+
+    def test_omits_profit_when_hidden(self):
+        config = MarketConfig()
+        obs = make_observation(
+            config,
+            rival_table=(
+                RivalObservation("Vendor B", 4.0, None),
+                RivalObservation("Vendor C", 6.0, None),
+            ),
+            reveal_rival_profit=False,
+        )
+        call_log: list[ToolCallLog] = []
+        tools, _ = build_tools(obs, call_log)
+        result = get_tool(tools, "get_market_stats").invoke({})
+        assert "$5.00" in result  # average price still shown
+        assert "profit" not in result.lower()
 
     def test_round_one_has_no_stats(self):
         config = MarketConfig()

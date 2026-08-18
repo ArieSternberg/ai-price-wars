@@ -17,18 +17,20 @@ __all__ = ["RivalObservation", "Observation", "Vendor"]
 
 @dataclass(frozen=True)
 class RivalObservation:
-    """One rival's price and profit from last round, under its neutral label.
+    """One rival's price (and, if the match reveals it, profit) from last round,
+    under its neutral label.
 
-    Full profit transparency is a deliberate condition, not the realistic default —
-    in a real market you don't usually see a competitor's actual profit, only their
-    price. Here every vendor has identical cost and demand, so full transparency is
-    a clean way to ask "does knowing a rival is struggling change how a model prices
-    against them," rather than a claim about what's realistic.
+    Full profit transparency is a deliberate, opt-in condition, not the realistic
+    default — in a real market you don't usually see a competitor's actual profit,
+    only their price. `profit` is `None` when the match is run with
+    `reveal_rival_profit=False`; check `Observation.reveal_rival_profit` rather than
+    inferring visibility from whether this happens to be `None` on any given round
+    (round 1 has no rival data yet either way).
     """
 
     label: str
     price: float
-    profit: float
+    profit: float | None
 
 
 @dataclass(frozen=True)
@@ -49,7 +51,8 @@ class Observation:
     own_profit_history: tuple[float, ...]
     rival_table: tuple[RivalObservation, ...]  # last round's prices+profits, order shuffled fresh
     rival_price_history: dict[str, tuple[float, ...]]  # label -> full price history
-    rival_profit_history: dict[str, tuple[float, ...]]  # label -> full profit history
+    rival_profit_history: dict[str, tuple[float, ...]]  # label -> full profit history; empty if hidden
+    reveal_rival_profit: bool  # the single source of truth for whether rivals' profit is visible
     config: MarketConfig
 
 

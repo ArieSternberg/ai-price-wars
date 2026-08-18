@@ -21,6 +21,7 @@ def make_observation(config: MarketConfig, rival_table: tuple[RivalObservation, 
         rival_table=rival_table,
         rival_price_history={},
         rival_profit_history={},
+        reveal_rival_profit=True,
         config=config,
     )
 

@@ -3,9 +3,10 @@
 Usage:
     streamlit run app/live_match.py
 
-Defaults to an all-scripted-bot roster — free, instant, unlimited reruns. Opting
-into a real LLM vendor makes real, billed OpenRouter calls every round; off by
-default, and the sidebar says so before you can turn it on.
+Every seat is independently configurable — a scripted bot or a specific real LLM
+model, picked per slot in the sidebar. Real models are opt-in per seat, never on by
+default, and the sidebar totals up exactly how many will make billed API calls
+before you hit Run.
 """
 
 from __future__ import annotations
@@ -15,35 +16,84 @@ import asyncio
 import pandas as pd
 import streamlit as st
 
+from pricewars.agents.llm import LLMVendor
+from pricewars.agents.registry import MODEL_REGISTRY
 from pricewars.agents.scripted import ConstantMarkupBot, RandomBot, TitForTatBot, UndercutterBot
-from pricewars.market import MarketConfig, solve_references
+from pricewars.market import MarketConfig, market_temperature, solve_references
 from pricewars.tournament import MatchConfig, RoundLog, run_match
 
 st.set_page_config(page_title="AI Price Wars — live match", layout="wide")
 st.title("🍅 AI Price Wars — live match")
 st.caption(
-    "Six vendors, same brief, same costs, same customers. Prices update round by round as the match runs."
+    "Same brief, same costs, same customers. Prices update round by round as the match runs."
 )
+
+MIN_VENDORS, MAX_VENDORS = 2, 6
+
+# Bot slot options: key -> (label, zero-argument factory). Fresh instance per slot,
+# even if the same bot type is picked twice.
+BOT_OPTIONS: dict[str, tuple[str, object]] = {
+    "bot_undercutter_mild": ("📜 Undercutter (mild, -$0.10)", lambda: UndercutterBot(undercut=0.10)),
+    "bot_undercutter_aggressive": (
+        "📜 Undercutter (aggressive, -$0.50)",
+        lambda: UndercutterBot(undercut=0.50),
+    ),
+    "bot_tit_for_tat": ("📜 Tit-for-Tat", lambda: TitForTatBot()),
+    "bot_constant_low": ("📜 Constant Markup (low, +$1.50)", lambda: ConstantMarkupBot(markup=1.5)),
+    "bot_constant_high": ("📜 Constant Markup (high, +$4.00)", lambda: ConstantMarkupBot(markup=4.0)),
+    "bot_random": ("📜 Random", lambda: RandomBot(seed=7)),
+}
+
+# Model slot options: key -> (label, ModelSpec). Built from the registry so adding a
+# model there is the only edit needed to add it here too.
+MODEL_OPTIONS: dict[str, tuple[str, object]] = {
+    f"model_{spec.key}": (f"🤖 {spec.display_name} ({spec.provider})", spec) for spec in MODEL_REGISTRY
+}
+
+ALL_OPTIONS = {**BOT_OPTIONS, **MODEL_OPTIONS}
+DEFAULT_SLOT_ORDER = list(BOT_OPTIONS.keys())  # matches the old all-scripted default exactly
 
 with st.sidebar:
     st.header("Match setup")
     n_rounds = st.slider("Rounds", 1, 30, 10)
     seed = st.number_input("Seed", value=1, step=1)
+    n_vendors = st.slider("Number of competitors", MIN_VENDORS, MAX_VENDORS, MAX_VENDORS)
 
     st.divider()
-    use_llm = st.checkbox("Include one real LLM vendor", value=False)
-    model_id = "anthropic/claude-sonnet-4.5"
-    if use_llm:
-        model_id = st.text_input("OpenRouter model id", value=model_id)
+    st.subheader("Competitors")
+    slot_keys: list[str] = []
+    for i in range(n_vendors):
+        default_key = DEFAULT_SLOT_ORDER[i % len(DEFAULT_SLOT_ORDER)]
+        default_index = list(ALL_OPTIONS.keys()).index(default_key)
+        chosen = st.selectbox(
+            f"Seat {i + 1}",
+            options=list(ALL_OPTIONS.keys()),
+            format_func=lambda k: ALL_OPTIONS[k][0],
+            index=default_index,
+            key=f"slot_{i}",
+        )
+        slot_keys.append(chosen)
+
+    model_slots = [k for k in slot_keys if k.startswith("model_")]
+    if model_slots:
+        names = ", ".join(ALL_OPTIONS[k][0].removeprefix("🤖 ") for k in model_slots)
         st.warning(
-            "Each round this vendor plays makes real, billed OpenRouter API calls. "
-            "Check current model ids/pricing at openrouter.ai/models before running.",
+            f"{len(model_slots)} seat(s) will make real, billed OpenRouter API calls every "
+            f"round: {names}. Check current pricing at openrouter.ai/models.",
             icon="⚠️",
         )
 
+    st.divider()
+    profit_visibility = st.radio(
+        "Profit visibility",
+        options=["Everyone's (full transparency)", "Own only"],
+        index=0,
+    )
+    reveal_rival_profit = profit_visibility.startswith("Everyone's")
+
     run_clicked = st.button("▶ Run match", type="primary", use_container_width=True)
 
-config = MarketConfig()
+config = MarketConfig(n_vendors=n_vendors)
 references = solve_references(config)
 
 st.caption(
@@ -62,25 +112,25 @@ decision_log_header_placeholder = st.empty()
 decision_log_container = st.container()
 
 
-def build_roster(use_llm: bool, model_id: str) -> list:
-    bots = [
-        UndercutterBot(undercut=0.10),
-        UndercutterBot(undercut=0.50),
-        TitForTatBot(),
-        ConstantMarkupBot(markup=1.5),
-        ConstantMarkupBot(markup=4.0),
-    ]
-    if use_llm:
-        from pricewars.agents.providers import build_openrouter_vendor
+def build_roster(slot_keys: list[str]) -> list:
+    from pricewars.agents.providers import build_openrouter_vendor
 
-        llm_vendor = build_openrouter_vendor(model_id)  # uses DEFAULT_MAX_TOOL_CALLS
-        return [llm_vendor, *bots]
-    return [*bots, RandomBot(seed=7)]
+    roster = []
+    for key in slot_keys:
+        if key in BOT_OPTIONS:
+            _, factory = BOT_OPTIONS[key]
+            roster.append(factory())
+        else:
+            _, spec = MODEL_OPTIONS[key]
+            roster.append(build_openrouter_vendor(spec.model_id, name=spec.display_name))
+    return roster
 
 
-def run_live_match(n_rounds: int, seed: int, use_llm: bool, model_id: str) -> None:
+def run_live_match(
+    n_rounds: int, seed: int, slot_keys: list[str], reveal_rival_profit: bool
+) -> None:
     try:
-        roster = build_roster(use_llm, model_id)
+        roster = build_roster(slot_keys)
     except RuntimeError as e:
         status_placeholder.error(str(e))
         return
@@ -88,18 +138,20 @@ def run_live_match(n_rounds: int, seed: int, use_llm: bool, model_id: str) -> No
     match_config = MatchConfig(n_rounds=n_rounds, seed=seed)
     price_rows: list[dict] = []
     temp_rows: list[dict] = []
-    llm_vendor = roster[0] if use_llm else None
-    if llm_vendor is not None:
+    llm_vendors = [v for v in roster if isinstance(v, LLMVendor)]
+    if llm_vendors:
         decision_log_header_placeholder.subheader("🧠 Agent decision log")
 
     def market_temperature_of(round_logs: tuple[RoundLog, ...]) -> float:
-        from pricewars.market import market_temperature
-
         avg_price = sum(r.price_clamped for r in round_logs) / len(round_logs)
         return market_temperature(avg_price, references)
 
     def on_round(round_num: int, round_logs: tuple[RoundLog, ...]) -> None:
         progress_placeholder.progress(round_num / n_rounds, text=f"Round {round_num} / {n_rounds}")
+
+        # round_logs[i] always corresponds to roster[i] — tournament.py builds each
+        # round's log by iterating the same fixed vendor order every round.
+        vendor_by_label = {log.vendor_label: vendor for vendor, log in zip(roster, round_logs)}
 
         for log in round_logs:
             price_rows.append(
@@ -112,6 +164,14 @@ def run_live_match(n_rounds: int, seed: int, use_llm: bool, model_id: str) -> No
         temp_df = pd.DataFrame(temp_rows).set_index("round")
         temp_chart_placeholder.line_chart(temp_df, height=360, y_label="market temperature")
 
+        def flag_for(log: RoundLog) -> str:
+            vendor = vendor_by_label[log.vendor_label]
+            if isinstance(vendor, LLMVendor) and any(
+                f.round_num == round_num for f in vendor.compliance_log
+            ):
+                return "⚠️ compliance fallback"
+            return ""
+
         standings = sorted(round_logs, key=lambda r: -r.cumulative_profit)
         standings_df = pd.DataFrame(
             [
@@ -120,50 +180,63 @@ def run_live_match(n_rounds: int, seed: int, use_llm: bool, model_id: str) -> No
                     "price this round": f"${s.price_clamped:.2f}",
                     "profit this round": f"${s.profit:.2f}",
                     "cumulative profit": f"${s.cumulative_profit:.2f}",
-                    "flag": "⚠️ compliance fallback"
-                    if llm_vendor is not None
-                    and s.vendor_name == llm_vendor.name
-                    and any(f.round_num == round_num for f in llm_vendor.compliance_log)
-                    else "",
+                    "flag": flag_for(s),
                 }
                 for s in standings
             ]
         )
         standings_placeholder.dataframe(standings_df, use_container_width=True, hide_index=True)
 
-        if llm_vendor is not None and llm_vendor.compliance_log:
+        total_failures = sum(len(v.compliance_log) for v in llm_vendors)
+        if total_failures:
+            per_vendor = ", ".join(
+                f"{v.name}: {len(v.compliance_log)}" for v in llm_vendors if v.compliance_log
+            )
             compliance_placeholder.warning(
-                f"{llm_vendor.name}: {len(llm_vendor.compliance_log)} compliance failure(s) so far — "
-                "see the fallback flags in the table above.",
+                f"{total_failures} compliance failure(s) so far ({per_vendor}) — see the "
+                "fallback flags in the table above.",
                 icon="⚠️",
             )
 
-        if llm_vendor is not None:
-            record = next(
-                (r for r in llm_vendor.decision_log if r.round_num == round_num), None
-            )
-            if record is not None:
-                icon = "⚠️" if record.was_compliance_failure else "✅"
-                title = f"{icon} Round {round_num} — {llm_vendor.name} priced ${record.price:.2f}"
-                if record.was_compliance_failure:
-                    title += " (compliance fallback, not a real decision)"
-                with decision_log_container.expander(title, expanded=False):
-                    st.markdown("**Reasoning:**")
-                    st.markdown(record.reasoning if record.reasoning else "*(no reasoning text — went straight to tool calls)*")
-                    st.markdown(f"**Tool calls ({len(record.tool_calls)}):**")
-                    if record.tool_calls:
-                        st.dataframe(
-                            pd.DataFrame(record.tool_calls), use_container_width=True, hide_index=True
-                        )
-                    else:
-                        st.caption("None.")
+        for vendor, log in zip(roster, round_logs):
+            if not isinstance(vendor, LLMVendor):
+                continue
+            record = next((r for r in vendor.decision_log if r.round_num == round_num), None)
+            if record is None:
+                continue
+            icon = "⚠️" if record.was_compliance_failure else "✅"
+            title = f"{icon} Round {round_num} — {log.vendor_label} ({vendor.name}) priced ${record.price:.2f}"
+            if record.was_compliance_failure:
+                title += " (compliance fallback, not a real decision)"
+            with decision_log_container.expander(title, expanded=False):
+                st.markdown("**Reasoning:**")
+                st.markdown(
+                    record.reasoning
+                    if record.reasoning
+                    else "*(no reasoning text — went straight to tool calls)*"
+                )
+                st.markdown(f"**Tool calls ({len(record.tool_calls)}):**")
+                if record.tool_calls:
+                    st.dataframe(
+                        pd.DataFrame(record.tool_calls), use_container_width=True, hide_index=True
+                    )
+                else:
+                    st.caption("None.")
 
     status_placeholder.info("Running...")
-    asyncio.run(run_match(roster, config, match_config, on_round_complete=on_round))
+    asyncio.run(
+        run_match(
+            roster,
+            config,
+            match_config,
+            on_round_complete=on_round,
+            reveal_rival_profit=reveal_rival_profit,
+        )
+    )
     status_placeholder.success(f"Match complete — {n_rounds} rounds played.")
 
 
 if run_clicked:
-    run_live_match(n_rounds, int(seed), use_llm, model_id)
+    run_live_match(n_rounds, int(seed), slot_keys, reveal_rival_profit)
 else:
     status_placeholder.info("Configure a match in the sidebar and click **Run match**.")
