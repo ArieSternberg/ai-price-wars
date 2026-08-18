@@ -115,10 +115,15 @@ Built as a LangGraph graph so the README can show the agent diagram.
 - Price must be a number in `[cost, price_cap]`. Out-of-range is logged as a compliance failure
   and clamped, never silently retried.
 - Structured `set_price` tool call required — no model gets penalized for being chatty.
-- Hard cap on tool calls per round (default 20) to bound cost. (Started at 8; live testing
-  against a real 6-vendor market showed that's structurally too tight — checking every rival's
-  price history once already costs 5 calls, leaving nothing for market stats, simulation, or the
-  commit itself. Raised once, based on that evidence, not tuned per-model.)
+- Hard cap on tool calls per round (default 40, enforced) to bound cost. (Started at 8, raised to
+  20 — a 6-vendor market needs 5 calls just to check every rival's history once, leaving nothing
+  for stats/simulation/commit — then raised again to 40 after live testing showed GPT-5.5
+  routinely exhausting 20-25 calls without ever committing while both Claude models converged
+  fine in the same match.)
+- The system prompt's *stated* budget (`STATED_MAX_TOOL_CALLS`, default 20) is deliberately kept
+  below the real enforced cap — an active experiment in whether a model that's told a lower
+  number behaves differently near it than one given no stated budget at all, even though the
+  harness quietly allows twice that.
 - Reasoning text persisted with every decision. This is the qualitative payload of the project.
 
 ---

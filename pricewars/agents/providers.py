@@ -12,7 +12,7 @@ import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
-from pricewars.agents.llm import DEFAULT_MAX_TOOL_CALLS, LLMVendor
+from pricewars.agents.llm import DEFAULT_MAX_TOOL_CALLS, STATED_MAX_TOOL_CALLS, LLMVendor
 
 __all__ = ["OPENROUTER_BASE_URL", "build_openrouter_vendor"]
 
@@ -23,11 +23,16 @@ def build_openrouter_vendor(
     model_id: str,
     name: str | None = None,
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
+    stated_max_tool_calls: int | None = STATED_MAX_TOOL_CALLS,
     temperature: float = 0.7,
 ) -> LLMVendor:
     """Build an `LLMVendor` backed by a specific OpenRouter model id, e.g.
     `"anthropic/claude-sonnet-4.5"`. Model ids churn fast — check
     https://openrouter.ai/models for what's actually available before using one.
+
+    `max_tool_calls` is the real, enforced budget; `stated_max_tool_calls` is what
+    the system prompt tells the model (may deliberately differ — see
+    STATED_MAX_TOOL_CALLS's docstring in agents/llm.py).
 
     Reads `OPENROUTER_API_KEY` from the environment (loading `.env` if present).
     Raises `RuntimeError` with a clear message if the key isn't set, rather than
@@ -46,4 +51,9 @@ def build_openrouter_vendor(
         api_key=api_key,
         temperature=temperature,
     )
-    return LLMVendor(model=model, name=name or model_id, max_tool_calls=max_tool_calls)
+    return LLMVendor(
+        model=model,
+        name=name or model_id,
+        max_tool_calls=max_tool_calls,
+        stated_max_tool_calls=stated_max_tool_calls,
+    )

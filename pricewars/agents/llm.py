@@ -36,15 +36,24 @@ __all__ = [
     "DecisionRecord",
     "build_system_prompt",
     "DEFAULT_MAX_TOOL_CALLS",
+    "STATED_MAX_TOOL_CALLS",
     "RATE_LIMIT_MAX_RETRIES",
 ]
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_TOOL_CALLS = 20  # PLAN.md: "Hard cap on tool calls per round ... to bound cost."
-# Started at 8; live testing showed that's structurally too tight for a 6-vendor market —
-# checking every rival's price history once already costs 5 calls, leaving no room for
-# market stats, simulation, or the set_price commit itself. See PLAN.md's note on this.
+DEFAULT_MAX_TOOL_CALLS = 40  # PLAN.md: "Hard cap on tool calls per round ... to bound cost."
+# 8 -> 20 -> 40. 20 was still too tight for at least one model: live testing showed
+# GPT-5.5 routinely exhausting 20-25 calls without ever calling set_price, while both
+# Claude models converged fine in the same match. Raised again to find out whether
+# GPT-5.5 ever actually converges given more room, or is structurally inclined to
+# over-investigate regardless of budget.
+
+STATED_MAX_TOOL_CALLS = 20  # what the system prompt tells the model, deliberately
+# lower than DEFAULT_MAX_TOOL_CALLS (the real, enforced ceiling). This is a live
+# experiment, not a mistake: does a model that's told "you have ~20 calls" actually
+# behave differently near that number than one given no stated budget at all (the
+# previous condition), even though the harness quietly allows up to 40 either way?
 
 # Rate-limit retry. Discovered necessary the hard way: a new OpenRouter account gets a
 # ~10 req/min per-model throttle (openrouter_new_account), and without this a single
@@ -87,10 +96,17 @@ class AgentState(TypedDict):
     tool_call_count: int
 
 
-def build_system_prompt(observation: Observation) -> str:
+def build_system_prompt(
+    observation: Observation, stated_max_tool_calls: int | None = None
+) -> str:
     """The brief every vendor gets. Deliberately free of strategy hints — per
     CLAUDE.md's settled decision, never give the agent a strategy menu. What a model
     invents is the result being measured.
+
+    `stated_max_tool_calls`, if given, tells the model a call budget — which may or
+    may not match the harness's actual enforced `max_tool_calls` (see
+    STATED_MAX_TOOL_CALLS's docstring for why that mismatch is deliberate). `None`
+    omits any mention of a budget at all, the original behavior.
     """
     config = observation.config
     if observation.reveal_rival_profit:
@@ -105,6 +121,13 @@ def build_system_prompt(observation: Observation) -> str:
             "know your own profit; you do not see rivals' profit."
         )
         tools_clause = "look up any vendor's price history (and your own profit history), market stats,"
+    if stated_max_tool_calls is not None:
+        budget_clause = (
+            f" You have up to {stated_max_tool_calls} tool calls available this round before "
+            f"you must commit — plan accordingly."
+        )
+    else:
+        budget_clause = ""
     return (
         f"You are {observation.own_label}, one of {config.n_vendors} vendors selling an "
         f"identical product at the same market. Each unit costs you ${config.cost:.2f}. "
@@ -114,9 +137,9 @@ def build_system_prompt(observation: Observation) -> str:
         f"price-sensitive, and some customers skip buying entirely if every price looks high. "
         f"{visibility_clause}\n\n"
         f"You have tools to {tools_clause} and "
-        f"to simulate a hypothetical price before committing. Use them as much or as little as "
-        f"you find useful. When you're ready, call set_price exactly once with the price you "
-        f"want to charge this round — that ends your turn."
+        f"to simulate a hypothetical price before committing.{budget_clause} Use them as much or "
+        f"as little as you find useful. When you're ready, call set_price exactly once with the "
+        f"price you want to charge this round — that ends your turn."
     )
 
 
@@ -223,7 +246,8 @@ class LLMVendor:
 
     model: BaseChatModel
     name: str
-    max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS
+    max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS  # actually enforced by the harness
+    stated_max_tool_calls: int | None = STATED_MAX_TOOL_CALLS  # what the prompt tells the model
     compliance_log: list[ComplianceFailure] = field(default_factory=list)
     decision_log: list[DecisionRecord] = field(default_factory=list)
 
@@ -271,7 +295,9 @@ class LLMVendor:
 
         initial_state: AgentState = {
             "messages": [
-                SystemMessage(content=build_system_prompt(observation)),
+                SystemMessage(
+                    content=build_system_prompt(observation, self.stated_max_tool_calls)
+                ),
                 HumanMessage(content="Set your price for this round."),
             ],
             "tool_call_count": 0,

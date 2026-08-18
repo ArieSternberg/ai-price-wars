@@ -18,7 +18,12 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import PrivateAttr
 
 from pricewars.agents.base import Observation
-from pricewars.agents.llm import DEFAULT_MAX_TOOL_CALLS, LLMVendor, build_system_prompt
+from pricewars.agents.llm import (
+    DEFAULT_MAX_TOOL_CALLS,
+    STATED_MAX_TOOL_CALLS,
+    LLMVendor,
+    build_system_prompt,
+)
 from pricewars.market import MarketConfig
 
 
@@ -162,10 +167,29 @@ class TestLLMVendorComplianceFailures:
         run(vendor.decide_price(make_observation(config, round_num=2)))
         assert vendor.compliance_log[0].tool_calls_used == 1
 
-    def test_default_max_tool_calls_is_twenty(self):
-        # Raised from 8 after live testing: a 6-vendor market needs 5 calls just to
-        # check every rival's history once, before stats, simulation, or set_price.
-        assert DEFAULT_MAX_TOOL_CALLS == 20
+    def test_default_max_tool_calls_is_forty(self):
+        # 8 -> 20 -> 40. Raised again after live testing showed GPT-5.5 routinely
+        # exhausting 20-25 calls without ever committing, while Claude converged fine.
+        assert DEFAULT_MAX_TOOL_CALLS == 40
+
+    def test_default_stated_max_tool_calls_is_twenty(self):
+        # Deliberately below the real enforced cap — see STATED_MAX_TOOL_CALLS's
+        # docstring: an active experiment, not a mismatch to "fix".
+        assert STATED_MAX_TOOL_CALLS == 20
+
+    def test_default_vendor_uses_stated_budget_of_twenty(self):
+        model = ScriptedChatModel(responses=[tool_call_message("set_price", {"price": 5.0})])
+        vendor = LLMVendor(model=model, name="fake-model")
+        assert vendor.stated_max_tool_calls == 20
+        assert vendor.max_tool_calls == 40
+
+    def test_can_run_with_no_stated_budget_at_all(self):
+        """stated_max_tool_calls=None preserves the original no-disclosure behavior."""
+        model = ScriptedChatModel(responses=[tool_call_message("set_price", {"price": 5.0})])
+        vendor = LLMVendor(model=model, name="fake-model", stated_max_tool_calls=None)
+        config = MarketConfig()
+        price = run(vendor.decide_price(make_observation(config)))
+        assert price == 5.0
 
 
 class TestBuildSystemPrompt:
@@ -197,6 +221,23 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt(make_observation(config, reveal_rival_profit=False))
         assert "do not see rivals' profit" in prompt
         assert "every rival's" not in prompt
+
+    def test_omits_budget_mention_by_default(self):
+        config = MarketConfig()
+        prompt = build_system_prompt(make_observation(config))
+        assert "tool calls available" not in prompt
+
+    def test_states_budget_when_given(self):
+        config = MarketConfig()
+        prompt = build_system_prompt(make_observation(config), stated_max_tool_calls=20)
+        assert "up to 20 tool calls available" in prompt
+
+    def test_stated_budget_can_differ_from_a_different_number(self):
+        """The prompt just relays whatever number it's given — it has no idea this
+        might not match the harness's real enforced cap."""
+        config = MarketConfig()
+        prompt = build_system_prompt(make_observation(config), stated_max_tool_calls=5)
+        assert "up to 5 tool calls available" in prompt
 
 
 class TestLLMVendorDecisionLog:
